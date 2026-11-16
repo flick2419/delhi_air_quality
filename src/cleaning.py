@@ -35,16 +35,17 @@ def run_cleaning_pipeline():
     config = load_config()
     os.makedirs("data/processed", exist_ok=True)
     
-    stations = config["data"]["stations"]
     cleaned_dfs = []
     
-    for station in stations:
-        safe_name = station.split(",")[0].lower().replace(" ", "_")
-        raw_path = f"data/raw/air_quality_{safe_name}.csv"
-        if os.path.exists(raw_path):
-            df_clean = clean_station_data(raw_path)
-            cleaned_dfs.append(df_clean)
-            print(f"Cleaned station data for: {station}")
+    raw_paths = sorted(
+        path for path in os.listdir("data/raw")
+        if path.startswith("air_quality_") and path.endswith(".csv")
+    )
+    for filename in raw_paths:
+        raw_path = os.path.join("data/raw", filename)
+        df_clean = clean_station_data(raw_path)
+        cleaned_dfs.append(df_clean)
+        print(f"Cleaned station data: {filename}")
             
     if cleaned_dfs:
         combined_air = pd.concat(cleaned_dfs, ignore_index=True)
@@ -53,9 +54,20 @@ def run_cleaning_pipeline():
         weather_path = "data/raw/weather_raw.csv"
         if os.path.exists(weather_path):
             df_weather = pd.read_csv(weather_path)
-            # Assuming hourly alignment
-            # For simplicity in template integration, merge or align by index/timestamp
-            print("Weather data loaded successfully.")
+            df_weather["timestamp"] = pd.to_datetime(
+                df_weather.get("time", df_weather.get("timestamp")), errors="coerce"
+            )
+            weather_columns = [
+                column for column in df_weather.columns
+                if column not in {"time", "timestamp"}
+            ]
+            if weather_columns:
+                combined_air = combined_air.merge(
+                    df_weather[["timestamp"] + weather_columns],
+                    on="timestamp",
+                    how="left",
+                )
+                print("Weather data merged by timestamp.")
             
         # Save processed baseline
         combined_air.to_csv("data/processed/clean_air_quality.csv", index=False)

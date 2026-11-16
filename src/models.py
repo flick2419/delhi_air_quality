@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import numpy as np
 from sklearn.pipeline import Pipeline
@@ -37,7 +38,12 @@ def run_models():
     
     # 1. Baseline: Naive Persistence (Tomorrow = Today's PM2.5)
     y_persistence = test_df['pm25'].fillna(test_df['pm25'].median())
-    evaluate_predictions(y_test, y_persistence, "Baseline (Persistence)")
+    results = {}
+    predictions = test_df[['timestamp', 'station', 'pm25_next_day']].copy()
+    results["Baseline (Persistence)"] = evaluate_predictions(
+        y_test, y_persistence, "Baseline (Persistence)"
+    )
+    predictions["prediction_baseline"] = y_persistence.to_numpy()
     
     # 2. Ridge Regression Pipeline
     ridge_pipe = Pipeline([
@@ -46,7 +52,8 @@ def run_models():
     ])
     ridge_pipe.fit(X_train, y_train)
     y_pred_ridge = ridge_pipe.predict(X_test)
-    evaluate_predictions(y_test, y_pred_ridge, "Ridge Regression")
+    results["Ridge Regression"] = evaluate_predictions(y_test, y_pred_ridge, "Ridge Regression")
+    predictions["prediction_ridge"] = y_pred_ridge
     
     # 3. Random Forest
     tree_model = RandomForestRegressor(
@@ -56,7 +63,15 @@ def run_models():
     )
     tree_model.fit(X_train, y_train)
     y_pred_tree = tree_model.predict(X_test)
-    evaluate_predictions(y_test, y_pred_tree, "Random Forest")
+    results["Random Forest"] = evaluate_predictions(y_test, y_pred_tree, "Random Forest")
+    predictions["prediction_random_forest"] = y_pred_tree
+
+    os.makedirs("data/processed", exist_ok=True)
+    predictions.to_csv("data/processed/predictions.csv", index=False)
+    with open("data/processed/results.json", "w", encoding="utf-8") as file:
+        json.dump(results, file, indent=2)
+    print("Saved predictions to data/processed/predictions.csv")
+    print("Saved metrics to data/processed/results.json")
     
     print("Model training and baseline evaluation complete.")
 

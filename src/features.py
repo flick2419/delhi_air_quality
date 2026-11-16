@@ -12,8 +12,17 @@ def build_features():
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values(['station', 'timestamp']).reset_index(drop=True)
     
-    # 1. Target Definition: Next day PM2.5 (24-hour shift ahead per station)
-    df['pm25_next_day'] = df.groupby('station')['pm25'].shift(-24)
+    # 1. Target Definition: PM2.5 at the same station exactly 24 hours later.
+    # Timestamp matching remains correct for hourly, half-hourly, and irregular data.
+    target_lookup = df.set_index(['station', 'timestamp'])['pm25']
+    target_index = pd.MultiIndex.from_arrays(
+        [
+            df['station'].to_numpy(),
+            (df['timestamp'] + pd.Timedelta(days=1)).to_numpy(),
+        ],
+        names=['station', 'timestamp'],
+    )
+    df['pm25_next_day'] = target_lookup.reindex(target_index).to_numpy()
     
     # 2. Autoregressive Lags & Leakage-Free Rolling Features
     # Shift by 1 first so rolling means do NOT include current hour t (prevents data leakage)
