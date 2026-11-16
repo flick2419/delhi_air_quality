@@ -1,0 +1,25 @@
+project:
+  name: "Delhi Air Quality Forecasting"
+  random_seed: 42
+
+data:
+  start_date: "2021-11-01"
+  # Will use current date dynamically in scripts
+  stations:
+    - "Anand Vihar, Delhi - DPCC"
+    - "R.K. Puram, Delhi - DPCC"
+    - "ITO, Delhi - CPCB"
+    - "Punjabi Bagh, Delhi - DPCC"
+    - "Rohini, Delhi - DPCC"
+  pollutants:
+    - "pm25"
+    - "pm10"
+    - "no2"
+    - "so2"
+    - "co"
+    - "oz"
+
+model:
+  target_col: "pm25_next_day"
+  test_size_years: 1
+  val_size_years: 0.5
