@@ -1,7 +1,9 @@
 import os
 import json
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import shap
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
@@ -15,6 +17,31 @@ def evaluate_predictions(y_true, y_pred, model_name):
     r2 = r2_score(y_true, y_pred)
     print(f"[{model_name}] MAE: {mae:.2f} | RMSE: {rmse:.2f} | R²: {r2:.2f}")
     return {"model": model_name, "MAE": mae, "RMSE": rmse, "R2": r2}
+
+
+def save_ridge_shap_plot(ridge_pipe, X_train, feature_cols):
+    """Save a global SHAP feature-impact plot for the fitted Ridge model."""
+    scaler = ridge_pipe.named_steps["scaler"]
+    regressor = ridge_pipe.named_steps["regressor"]
+    transformed = scaler.transform(X_train)
+    sample = transformed[: min(len(transformed), 2000)]
+    explainer = shap.LinearExplainer(regressor, sample)
+    shap_values = explainer(sample)
+
+    os.makedirs("data/external", exist_ok=True)
+    plt.figure(figsize=(9, 6))
+    shap.summary_plot(
+        shap_values.values,
+        sample,
+        feature_names=feature_cols,
+        plot_type="bar",
+        show=False,
+    )
+    plt.tight_layout()
+    plt.savefig("data/external/shap_summary.png", dpi=180, bbox_inches="tight")
+    plt.close()
+    print("Saved SHAP summary to data/external/shap_summary.png")
+
 
 def run_models():
     train_path = "data/processed/train.csv"
@@ -54,6 +81,7 @@ def run_models():
     y_pred_ridge = ridge_pipe.predict(X_test)
     results["Ridge Regression"] = evaluate_predictions(y_test, y_pred_ridge, "Ridge Regression")
     predictions["prediction_ridge"] = y_pred_ridge
+    save_ridge_shap_plot(ridge_pipe, X_train, feature_cols)
     
     # 3. Random Forest
     tree_model = RandomForestRegressor(

@@ -84,6 +84,7 @@ def pm25_category(value):
 
 data = load_frame(PROCESSED / "clean_air_quality.csv")
 predictions = load_frame(PROCESSED / "predictions.csv")
+aqi_summary = load_frame(PROCESSED / "aqi_summary.csv")
 metrics = load_metrics()
 
 if data.empty:
@@ -132,7 +133,9 @@ col2.metric(
 col3.metric("Ridge test R²", f"{float(r2):.3f}" if r2 is not None else "Unavailable")
 col4.metric("Observations", f"{len(station_data):,}")
 
-tab1, tab2, tab3 = st.tabs(["📈 Trends & forecast", "🧠 Explainability", "ℹ️ Methodology"])
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["📈 Trends & forecast", "🧠 Explainability", "🌍 AQI overview", "ℹ️ Methodology"]
+)
 with tab1:
     chart = station_data.set_index("timestamp")[["pm25"]].rename(
         columns={"pm25": "Actual PM2.5"}
@@ -156,6 +159,47 @@ with tab1:
     st.subheader("Latest observations")
     st.dataframe(station_data.tail(10), use_container_width=True, hide_index=True)
 
+with tab3:
+    if aqi_summary.empty:
+        st.info("Import `aqi.csv` to enable the national AQI overview.")
+    else:
+        st.subheader("Daily AQI summary")
+        st.caption(
+            "This is a separate city/state AQI dataset and is not used by the PM2.5 model."
+        )
+        aqi_states = ["All states"] + sorted(aqi_summary["state"].unique())
+        selected_state = st.selectbox("State", aqi_states)
+        filtered_aqi = aqi_summary
+        if selected_state != "All states":
+            filtered_aqi = filtered_aqi[filtered_aqi["state"] == selected_state]
+        aqi_areas = ["All areas"] + sorted(filtered_aqi["area"].unique())
+        selected_area = st.selectbox("Area", aqi_areas)
+        if selected_area != "All areas":
+            filtered_aqi = filtered_aqi[filtered_aqi["area"] == selected_area]
+
+        aqi_col1, aqi_col2, aqi_col3 = st.columns(3)
+        aqi_col1.metric("Rows", f"{len(filtered_aqi):,}")
+        aqi_col2.metric(
+            "Average AQI",
+            f"{filtered_aqi['aqi'].mean():.0f}" if not filtered_aqi.empty else "Unavailable",
+        )
+        aqi_col3.metric(
+            "Highest AQI",
+            f"{filtered_aqi['aqi'].max():.0f}" if not filtered_aqi.empty else "Unavailable",
+        )
+        if not filtered_aqi.empty:
+            trend = (
+                filtered_aqi.groupby("date", as_index=True)["aqi"]
+                .mean()
+                .rename("Average AQI")
+            )
+            st.line_chart(trend)
+            st.dataframe(
+                filtered_aqi.sort_values("date", ascending=False).head(20),
+                use_container_width=True,
+                hide_index=True,
+            )
+
 with tab2:
     shap_path = EXTERNAL / "shap_summary.png"
     if shap_path.exists():
@@ -163,7 +207,7 @@ with tab2:
     else:
         st.info("SHAP output is not available yet.")
 
-with tab3:
+with tab4:
     st.markdown("#### What this dashboard shows")
     st.markdown(
         "- **Latest PM2.5:** most recent observation for the selected station.\n"
