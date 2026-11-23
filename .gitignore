@@ -1,0 +1,50 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+**/venv/
+**/.venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Local datasets and generated artifacts
+data/raw/
+data/processed/
+data/external/
+
+# Generated reports
+reports/
+
+
+# Private ChatGPT handoff
+CHATGPT_PROJECT_PROMPT.md
+
+# Private ChatGPT handoff
+CHATGPT_PROJECT_PROMPT.md

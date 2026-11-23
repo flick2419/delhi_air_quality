@@ -1,15 +1,21 @@
-import os
+from pathlib import Path
+
 import pandas as pd
-import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+PROCESSED_DIR = ROOT / "data" / "processed"
 
 def build_features():
-    processed_path = "data/processed/clean_air_quality.csv"
-    if not os.path.exists(processed_path):
-        print("Processed data not found. Run cleaning first.")
-        return
+    processed_path = PROCESSED_DIR / "clean_air_quality.csv"
+    if not processed_path.exists():
+        raise FileNotFoundError("Processed data not found. Run cleaning first.")
         
     df = pd.read_csv(processed_path)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True, errors='coerce')
+    df = df.dropna(subset=['timestamp', 'station', 'pm25'])
+    df['pm25'] = pd.to_numeric(df['pm25'], errors='coerce')
+    df = df.dropna(subset=['pm25'])
+    df = df.drop_duplicates(subset=['station', 'timestamp'])
     df = df.sort_values(['station', 'timestamp']).reset_index(drop=True)
     
     # 1. Target Definition: PM2.5 at the same station exactly 24 hours later.
@@ -36,14 +42,14 @@ def build_features():
     
     # 3. Calendar Features
     df['hour'] = df['timestamp'].dt.hour
-    df['dayofweek'] = df['timestamp'].dt.dayofweek
+    df['dayofweek'] = df['timestamp'].dt.day_of_week
     df['month'] = df['timestamp'].dt.month
     df['is_weekend'] = df['dayofweek'].isin([5, 6]).astype(int)
     
     # Drop rows where target is NaN (last 24 hours of dataset)
     df_model = df.dropna(subset=['pm25_next_day']).copy()
     
-    output_path = "data/processed/model_ready_data.csv"
+    output_path = PROCESSED_DIR / "model_ready_data.csv"
     df_model.to_csv(output_path, index=False)
     print(f"Feature engineering complete. Saved model-ready data to {output_path}")
 

@@ -103,11 +103,11 @@ latest_pm25 = float(latest["pm25"]) if pd.notna(latest["pm25"]) else None
 model_prediction = None
 if not predictions.empty and "station" in predictions:
     selected = predictions[predictions["station"] == station]
-    if not selected.empty and "prediction_ridge" in selected:
-        model_prediction = float(selected.sort_values("timestamp").iloc[-1]["prediction_ridge"])
+    if not selected.empty and "prediction_svr" in selected:
+        model_prediction = float(selected.sort_values("timestamp").iloc[-1]["prediction_svr"])
 
-ridge_metrics = metrics.get("Ridge Regression", {})
-r2 = ridge_metrics.get("R2")
+primary_metrics = metrics.get("SVR", {})
+r2 = primary_metrics.get("R2")
 latest_timestamp = latest.get("timestamp")
 category = pm25_category(latest_pm25)
 
@@ -125,12 +125,12 @@ col1.metric(
     f"{latest_pm25:.1f} µg/m³" if latest_pm25 is not None else "Unavailable",
 )
 col2.metric(
-    "Ridge next-day prediction",
+    "SVR next-day prediction",
     f"{model_prediction:.1f} µg/m³"
     if model_prediction is not None
-    else "Run model evaluation",
+    else "No held-out row",
 )
-col3.metric("Ridge test R²", f"{float(r2):.3f}" if r2 is not None else "Unavailable")
+col3.metric("SVR test R²", f"{float(r2):.3f}" if r2 is not None else "Unavailable")
 col4.metric("Observations", f"{len(station_data):,}")
 
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -145,14 +145,14 @@ with tab1:
         st.line_chart(chart)
     if not predictions.empty and "station" in predictions:
         selected = predictions[predictions["station"] == station].sort_values("timestamp")
-        if not selected.empty and {"pm25_next_day", "prediction_ridge"}.issubset(selected.columns):
+        if not selected.empty and {"pm25_next_day", "prediction_svr"}.issubset(selected.columns):
             st.subheader("Held-out comparison")
             comparison = selected.set_index("timestamp")[
-                ["pm25_next_day", "prediction_ridge"]
+                ["pm25_next_day", "prediction_svr"]
             ].rename(
                 columns={
                     "pm25_next_day": "Observed next-day PM2.5",
-                    "prediction_ridge": "Ridge prediction",
+                    "prediction_svr": "SVR prediction",
                 }
             )
             st.line_chart(comparison.tail(max(1, window_days * 48)))
@@ -203,7 +203,7 @@ with tab3:
 with tab2:
     shap_path = EXTERNAL / "shap_summary.png"
     if shap_path.exists():
-        st.image(str(shap_path), caption="Feature impact summary")
+        st.image(str(shap_path), caption="Ridge feature impact summary")
     else:
         st.info("SHAP output is not available yet.")
 
@@ -211,13 +211,13 @@ with tab4:
     st.markdown("#### What this dashboard shows")
     st.markdown(
         "- **Latest PM2.5:** most recent observation for the selected station.\n"
-        "- **Prediction:** Ridge Regression output from the held-out test file.\n"
-        "- **R²:** test-set performance loaded from `results.json`.\n"
+        "- **Prediction:** SVR output from the held-out test file.\n"
+        "- **R²:** test-set SVR performance loaded from `results.json`.\n"
         "- **Category:** PM2.5-based CPCB-style category, not an official AQI bulletin."
     )
     st.markdown("#### Pipeline")
     st.code(
-        "OpenAQ → cleaning → 24-hour target → chronological split → Ridge model",
+        "OpenAQ → cleaning → 24-hour target → chronological split → SVR model",
         language="text",
     )
     st.caption(
