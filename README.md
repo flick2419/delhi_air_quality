@@ -42,6 +42,30 @@ Clean, engineer features, split chronologically, and evaluate:
 .\venv\Scripts\python.exe .\src\models.py
 ```
 
+## Refresh live Delhi data
+
+The application uses two public sources:
+
+- CPCB real-time PM2.5 readings through data.gov.in
+- CAMS PM2.5/PM10 forecasts through Open-Meteo
+
+Refresh the saved live snapshots:
+
+```powershell
+.\venv\Scripts\python.exe .\src\download_live_air_quality.py
+```
+
+The script prefers `DATAGOV_API_KEY` when set. It has a public documented
+demo-key fallback with low-volume limits:
+
+```powershell
+$env:DATAGOV_API_KEY = "YOUR_DEDICATED_DATA_GOV_IN_KEY"
+```
+
+The live downloader keeps the last successful snapshot if a source is temporarily
+unavailable. Never interpret stale data as fresh: the dashboard displays the
+latest stored CPCB timestamp and source.
+
 Launch the dashboard:
 
 ```powershell

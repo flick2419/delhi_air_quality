@@ -1,6 +1,10 @@
-"""Streamlit dashboard backed by the pipeline's saved data and metrics."""
+"""Modern live and historical air-quality dashboard."""
 
 import json
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -11,63 +15,166 @@ PROCESSED = ROOT / "data" / "processed"
 EXTERNAL = ROOT / "data" / "external"
 
 st.set_page_config(
-    page_title="Delhi Air Quality Forecasting",
-    page_icon="🌫️",
+    page_title="AirSight Delhi",
+    page_icon="◉",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 2rem; padding-bottom: 3rem; }
+    :html, body, [class*="css"] { font-family: Inter, Aptos, -apple-system, sans-serif; }
+    .stApp { background: #eef3f7; }
+    section[data-testid="stSidebar"] {
+        background: #0b1f33;
+        border-right: 1px solid rgba(255,255,255,.08);
+    }
+    section[data-testid="stSidebar"] * { color: #edf5f7; }
+    .block-container { max-width: 1180px; padding-top: 1.25rem; padding-bottom: 2.5rem; }
     [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #102a43 0%, #1f4e79 100%);
-        border: 1px solid #2f6690;
-        border-radius: 14px;
-        padding: 1rem 1.1rem;
+        background: #ffffff;
+        border: 1px solid #dde6ec;
+        border-radius: 16px;
+        padding: 18px 20px;
+        box-shadow: 0 8px 24px rgba(30, 52, 72, .06);
     }
-    [data-testid="stMetricLabel"], [data-testid="stMetricValue"],
-    [data-testid="stMetricDelta"] { color: white; }
-    .status-card {
-        border-radius: 14px; padding: 1rem 1.2rem; margin: .4rem 0 1.2rem;
-        border-left: 6px solid #2f6690; background: #eef6fb;
+    [data-testid="stMetricLabel"] { color: #667784; }
+    [data-testid="stMetricValue"] { color: #132f46; }
+    [data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; }
+    .brand-row {
+        display:flex; align-items:center; justify-content:space-between;
+        margin: 4px 0 18px 0;
     }
-    .muted { color: #52606d; font-size: .9rem; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brand-mark {
+        width:44px; height:44px; border-radius:14px;
+        background:linear-gradient(135deg,#18b6a4,#1d6fa5);
+        display:grid; place-items:center; color:white; font-weight:800;
+        box-shadow: 0 8px 18px rgba(29,111,165,.22);
+    }
+    .brand-title { color:#102a43; font-size:28px; font-weight:800; letter-spacing:-.5px; }
+    .brand-sub { color:#71818d; font-size:13px; margin-top:-2px; }
+    .source-pill {
+        background:#e5f6f2; color:#14796d; border:1px solid #c5e8df;
+        border-radius:999px; padding:7px 12px; font-size:12px; font-weight:700;
+    }
+    .notice {
+        background:#fff8e7; border:1px solid #ecdba8; border-radius:14px;
+        color:#5d5028; padding:12px 16px; margin:8px 0 18px 0;
+        font-size:13px;
+    }
+    .section-title { color:#102a43; font-weight:800; font-size:20px; margin-bottom:4px; }
+    .section-sub { color:#71818d; font-size:13px; margin-bottom:14px; }
+    .stTabs [data-baseweb="tab-list"] { gap:8px; }
+    .stTabs [data-baseweb="tab"] {
+        background:#fff; border:1px solid #dde6ec; border-radius:10px;
+        padding:8px 14px; color:#5d6f7c;
+    }
+    .stTabs [aria-selected="true"] {
+        background:#102a43; border-color:#102a43; color:#fff;
+    }
+    [data-testid="stAppViewContainer"] {
+        color: #1f3444;
+    }
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] li,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] span {
+        color: inherit;
+    }
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: #6b7c87 !important;
+    }
+    [data-testid="stDataFrame"] * {
+        color: #203746 !important;
+    }
+    [data-testid="stDataFrame"] th {
+        background: #edf3f6 !important;
+    }
+    [data-testid="stSelectbox"] > div,
+    [data-testid="stSlider"] {
+        background: transparent;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
-st.warning(
-    "Academic prototype only. This is not an official government forecast "
-    "or emergency warning service."
-)
-st.title("🌫️ Delhi Air Quality Forecasting")
-st.caption("A real-data academic prototype for station-level PM2.5 forecasting")
 
 
-@st.cache_data
-def load_frame(path):
+@st.cache_data(ttl=300)
+def load_csv(path):
+    path = Path(path)
     if not path.exists():
         return pd.DataFrame()
     frame = pd.read_csv(path)
     if "timestamp" in frame:
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame["timestamp"] = pd.to_datetime(
+            frame["timestamp"], errors="coerce", format="mixed", dayfirst=True
+        )
     return frame
 
 
+@st.cache_data(ttl=300)
+def load_status():
+    path = PROCESSED / "live_status.json"
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+        return json.loads(text)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@st.cache_data(ttl=300)
 def load_metrics():
     path = PROCESSED / "results.json"
     if not path.exists():
         return {}
     try:
-        with path.open(encoding="utf-8") as file:
-            return json.load(file)
-    except (OSError, json.JSONDecodeError) as error:
-        st.error(f"Could not read {path.name}: {error}")
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
-def pm25_category(value):
-    if value is None:
+def start_live_refresh():
+    """Start a bounded live refresh without blocking Streamlit reruns."""
+    placeholder = st.session_state.get("live_refresh_placeholder")
+    if st.session_state.get("live_refresh_running"):
+        return
+    st.session_state["live_refresh_running"] = True
+    st.session_state["live_refresh_error"] = ""
+    st.session_state["live_refresh_started"] = time.time()
+
+    def refresh():
+        try:
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "src" / "download_live_air_quality.py")],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            st.session_state["live_refresh_result"] = (
+                "success" if result.returncode == 0
+                else (result.stderr[-1200:] or "Live refresh failed.")
+            )
+        except subprocess.TimeoutExpired:
+            st.session_state["live_refresh_result"] = "Live refresh timed out."
+        except Exception as error:
+            st.session_state["live_refresh_result"] = str(error)
+        finally:
+            st.session_state["live_refresh_running"] = False
+            load_csv.clear()
+            load_status.clear()
+
+    thread = threading.Thread(target=refresh, daemon=True)
+    thread.start()
+
+
+def category_for_pm25(value):
+    if pd.isna(value):
         return "Unavailable"
     if value <= 30:
         return "Good"
@@ -82,146 +189,213 @@ def pm25_category(value):
     return "Severe"
 
 
-data = load_frame(PROCESSED / "clean_air_quality.csv")
-predictions = load_frame(PROCESSED / "predictions.csv")
-aqi_summary = load_frame(PROCESSED / "aqi_summary.csv")
+live = load_csv(PROCESSED / "live_cpcb_pm25.csv")
+forecast = load_csv(PROCESSED / "open_meteo_air_quality_forecast.csv")
+aqi_summary = load_csv(PROCESSED / "aqi_summary.csv")
 metrics = load_metrics()
-
-if data.empty:
-    st.info("Run the ingestion and processing pipeline before opening the dashboard.")
-    st.stop()
-
-stations = sorted(data["station"].dropna().unique())
-st.sidebar.header("Dashboard controls")
-station = st.sidebar.selectbox("Monitoring station", stations)
-window_days = st.sidebar.slider("Trend window (days)", 7, 90, 30)
-st.sidebar.caption("Use the refresh button in the browser after rerunning the pipeline.")
-station_data = data[data["station"] == station].sort_values("timestamp")
-
-latest = station_data.iloc[-1]
-latest_pm25 = float(latest["pm25"]) if pd.notna(latest["pm25"]) else None
-model_prediction = None
-if not predictions.empty and "station" in predictions:
-    selected = predictions[predictions["station"] == station]
-    if not selected.empty and "prediction_svr" in selected:
-        model_prediction = float(selected.sort_values("timestamp").iloc[-1]["prediction_svr"])
-
-primary_metrics = metrics.get("SVR", {})
-r2 = primary_metrics.get("R2")
-latest_timestamp = latest.get("timestamp")
-category = pm25_category(latest_pm25)
+status = load_status()
 
 st.markdown(
-    f'<div class="status-card"><strong>{station}</strong><br>'
-    f'<span class="muted">Latest observation: '
-    f'{latest_timestamp if pd.notna(latest_timestamp) else "Unavailable"} · '
-    f'PM2.5 category: <strong>{category}</strong></span></div>',
+    """
+    <div class="brand-row">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <div class="brand-title">AirSight Delhi</div>
+          <div class="brand-sub">Live air-quality intelligence</div>
+        </div>
+      </div>
+      <div class="source-pill">VERIFIED PUBLIC DATA</div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric(
-    "Latest PM2.5",
-    f"{latest_pm25:.1f} µg/m³" if latest_pm25 is not None else "Unavailable",
+st.markdown(
+    '<div class="notice"><b>Academic prototype.</b> Live readings and forecasts '
+    'come from public sources and must not be used as an official emergency '
+    'health warning.</div>',
+    unsafe_allow_html=True,
 )
-col2.metric(
-    "SVR next-day prediction",
-    f"{model_prediction:.1f} µg/m³"
-    if model_prediction is not None
-    else "No held-out row",
-)
-col3.metric("SVR test R²", f"{float(r2):.3f}" if r2 is not None else "Unavailable")
-col4.metric("Observations", f"{len(station_data):,}")
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📈 Trends & forecast", "🧠 Explainability", "🌍 AQI overview", "ℹ️ Methodology"]
-)
-with tab1:
-    chart = station_data.set_index("timestamp")[["pm25"]].rename(
-        columns={"pm25": "Actual PM2.5"}
-    )
-    if not chart.empty:
-        chart = chart.tail(max(1, window_days * 48))
-        st.line_chart(chart)
-    if not predictions.empty and "station" in predictions:
-        selected = predictions[predictions["station"] == station].sort_values("timestamp")
-        if not selected.empty and {"pm25_next_day", "prediction_svr"}.issubset(selected.columns):
-            st.subheader("Held-out comparison")
-            comparison = selected.set_index("timestamp")[
-                ["pm25_next_day", "prediction_svr"]
-            ].rename(
-                columns={
-                    "pm25_next_day": "Observed next-day PM2.5",
-                    "prediction_svr": "SVR prediction",
-                }
-            )
-            st.line_chart(comparison.tail(max(1, window_days * 48)))
-    st.subheader("Latest observations")
-    st.dataframe(station_data.tail(10), use_container_width=True, hide_index=True)
-
-with tab3:
-    if aqi_summary.empty:
-        st.info("Import `aqi.csv` to enable the national AQI overview.")
+with st.sidebar:
+    st.markdown("## Controls")
+    live_station = None
+    if not live.empty:
+        station_options = sorted(live["station"].dropna().unique())
+        live_station = st.selectbox("Monitoring station", ["All stations"] + station_options)
     else:
-        st.subheader("Daily AQI summary")
+        st.info("No live CPCB snapshot available.")
+
+    forecast_days = st.slider("Forecast horizon", 24, 120, 72, 24)
+    st.markdown("---")
+    refresh_result = st.session_state.get("live_refresh_result")
+    refresh_running = st.session_state.get("live_refresh_running", False)
+    if refresh_running:
+        st.button("Refreshing live data...", use_container_width=True, disabled=True)
+        st.caption("The existing snapshot remains visible.")
+    else:
+        if st.button("Refresh live data", use_container_width=True):
+            start_live_refresh()
+            st.rerun()
+    if refresh_result == "success":
+        st.success("Live sources refreshed.")
+        st.session_state["live_refresh_result"] = None
+    elif refresh_result:
+        st.error(refresh_result)
+        st.session_state["live_refresh_result"] = None
+
+    st.markdown("### Sources")
+    st.caption("CPCB via data.gov.in")
+    st.caption("CAMS via Open-Meteo")
+    st.caption("OpenAQ historical archive")
+
+live_filtered = live
+if live_station and live_station != "All stations":
+    live_filtered = live[live["station"] == live_station]
+
+tab_live, tab_forecast, tab_explain, tab_aqi = st.tabs(
+    ["Live Delhi", "Forecast", "Explainability", "AQI overview"]
+)
+
+with tab_live:
+    if live.empty:
+        st.warning(
+            "No live snapshot is present. Click **Refresh live data** in the sidebar "
+            "or run the live downloader."
+        )
+    else:
+        live_valid = live[live["pm25"].fillna(0) > 0].copy()
+        if live_valid.empty:
+            st.warning("CPCB PM2.5 readings are currently unavailable.")
+        else:
+            latest_time = pd.to_datetime(live_valid["timestamp"], errors="coerce").max()
+            mean_pm25 = live_valid["pm25"].mean()
+            max_row = live_valid.loc[live_valid["pm25"].idxmax()]
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Stations reporting", f"{live_valid['station'].nunique():,}")
+            k2.metric("Average PM2.5", f"{mean_pm25:.1f} µg/m³")
+            k3.metric("Highest station", f"{float(max_row['pm25']):.1f} µg/m³")
+            k4.metric(
+                "Latest CPCB update",
+                latest_time.strftime("%d %b, %H:%M") if pd.notna(latest_time) else "Unavailable",
+            )
+
+            st.markdown(
+                f"<div class='section-title'>Live station conditions</div>"
+                f"<div class='section-sub'>Highest reading: "
+                f"<b>{max_row['station']}</b> · "
+                f"{category_for_pm25(max_row['pm25'])}</div>",
+                unsafe_allow_html=True,
+            )
+
+            filtered_valid = live_filtered[live_filtered["pm25"].fillna(0) > 0].copy()
+            map_frame = filtered_valid[
+                ["latitude", "longitude", "station", "pm25"]
+            ].dropna().rename(columns={"latitude": "lat", "longitude": "lon"})
+            if not map_frame.empty:
+                st.map(map_frame, size=80, zoom=9)
+
+            view = filtered_valid.sort_values("pm25", ascending=False).copy()
+            view["category"] = view["pm25"].apply(category_for_pm25)
+            view = view[
+                [
+                    "station", "pm25", "pm25_min", "pm25_max", "category",
+                    "timestamp", "source",
+                ]
+            ].rename(columns={
+                "pm25": "PM2.5",
+                "pm25_min": "Minimum",
+                "pm25_max": "Maximum",
+                "category": "Category",
+                "timestamp": "Update",
+            })
+            st.dataframe(view, use_container_width=True, hide_index=True)
+
+            st.caption(
+                f"Snapshot source: {status.get('live_source', 'CPCB via data.gov.in')}. "
+                f"{len(live_valid)} usable station readings; "
+                f"{status.get('latest_observation', 'timestamp unavailable')}."
+            )
+
+with tab_forecast:
+    st.markdown("<div class='section-title'>CAMS PM2.5 forecast</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='section-sub'>No-key Open-Meteo forecast for central Delhi. "
+        "This is a source forecast, not the repository's trained SVR model.</div>",
+        unsafe_allow_html=True,
+    )
+    if forecast.empty:
+        st.info("Run the live downloader to generate the Open-Meteo forecast.")
+    else:
+        chart = forecast.set_index("timestamp").sort_index()
+        chart = chart[chart.index <= chart.index.min() + pd.Timedelta(hours=forecast_days)]
+        st.line_chart(chart)
+        c1, c2, c3 = st.columns(3)
+        current_status = status.get("open_meteo_current", {})
+        c1.metric(
+            "Current PM2.5",
+            f"{float(current_status.get('pm2_5', chart['pm25_forecast'].iloc[0])):.1f} µg/m³",
+        )
+        c2.metric(
+            "Current PM10",
+            f"{float(current_status.get('pm10', chart['pm10_forecast'].iloc[0])):.1f} µg/m³",
+        )
+        c3.metric(
+            "US AQI",
+            f"{int(current_status.get('us_aqi', 0))}" if current_status else "Unavailable",
+        )
+        st.dataframe(
+            chart.tail(24).reset_index().rename(columns={
+                "pm25_forecast": "PM2.5 forecast",
+                "pm10_forecast": "PM10 forecast",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+with tab_explain:
+    st.markdown("<div class='section-title'>Model explainability</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='section-sub'>A transparent summary of the historical PM2.5 "
+        "evaluation. These metrics are not live CPCB readings.</div>",
+        unsafe_allow_html=True,
+    )
+    svr_metrics = metrics.get("SVR", {})
+    if svr_metrics:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("SVR MAE", f"{float(svr_metrics['MAE']):.1f} µg/m³")
+        c2.metric("SVR RMSE", f"{float(svr_metrics['RMSE']):.1f} µg/m³")
+        c3.metric("SVR test R²", f"{float(svr_metrics['R2']):.3f}")
         st.caption(
-            "This is a separate city/state AQI dataset and is not used by the PM2.5 model."
+            "The held-out result compares 24-hour PM2.5 targets against Ridge, SVR, "
+            "Random Forest, XGBoost, and persistence. SVR was strongest in this run."
         )
-        aqi_states = ["All states"] + sorted(aqi_summary["state"].unique())
-        selected_state = st.selectbox("State", aqi_states)
-        filtered_aqi = aqi_summary
-        if selected_state != "All states":
-            filtered_aqi = filtered_aqi[filtered_aqi["state"] == selected_state]
-        aqi_areas = ["All areas"] + sorted(filtered_aqi["area"].unique())
-        selected_area = st.selectbox("Area", aqi_areas)
-        if selected_area != "All areas":
-            filtered_aqi = filtered_aqi[filtered_aqi["area"] == selected_area]
-
-        aqi_col1, aqi_col2, aqi_col3 = st.columns(3)
-        aqi_col1.metric("Rows", f"{len(filtered_aqi):,}")
-        aqi_col2.metric(
-            "Average AQI",
-            f"{filtered_aqi['aqi'].mean():.0f}" if not filtered_aqi.empty else "Unavailable",
-        )
-        aqi_col3.metric(
-            "Highest AQI",
-            f"{filtered_aqi['aqi'].max():.0f}" if not filtered_aqi.empty else "Unavailable",
-        )
-        if not filtered_aqi.empty:
-            trend = (
-                filtered_aqi.groupby("date", as_index=True)["aqi"]
-                .mean()
-                .rename("Average AQI")
-            )
-            st.line_chart(trend)
-            st.dataframe(
-                filtered_aqi.sort_values("date", ascending=False).head(20),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-with tab2:
     shap_path = EXTERNAL / "shap_summary.png"
     if shap_path.exists():
-        st.image(str(shap_path), caption="Ridge feature impact summary")
+        st.image(str(shap_path), caption="Ridge global feature-impact summary")
     else:
-        st.info("SHAP output is not available yet.")
+        st.info("Run `python src/models.py` to generate the SHAP summary.")
 
-with tab4:
-    st.markdown("#### What this dashboard shows")
-    st.markdown(
-        "- **Latest PM2.5:** most recent observation for the selected station.\n"
-        "- **Prediction:** SVR output from the held-out test file.\n"
-        "- **R²:** test-set SVR performance loaded from `results.json`.\n"
-        "- **Category:** PM2.5-based CPCB-style category, not an official AQI bulletin."
-    )
-    st.markdown("#### Pipeline")
-    st.code(
-        "OpenAQ → cleaning → 24-hour target → chronological split → SVR model",
-        language="text",
-    )
-    st.caption(
-        "This application is for academic evaluation. It is not an official "
-        "government forecast or emergency warning service."
-    )
-#.\venv\Scripts\python.exe -m streamlit run .\app\ui.py to run the website 
+with tab_aqi:
+    if aqi_summary.empty:
+        st.info("Import a city/state AQI summary with `src/import_aqi_summary.py`.")
+    else:
+        state_options = ["All states"] + sorted(aqi_summary["state"].dropna().unique())
+        state = st.selectbox("State", state_options)
+        filtered = aqi_summary.copy()
+        if state != "All states":
+            filtered = filtered[filtered["state"] == state]
+        area_options = ["All areas"] + sorted(filtered["area"].dropna().unique())
+        area = st.selectbox("Area", area_options)
+        if area != "All areas":
+            filtered = filtered[filtered["area"] == area]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Rows", f"{len(filtered):,}")
+        c2.metric("Average AQI", f"{filtered['aqi'].mean():.0f}" if not filtered.empty else "Unavailable")
+        c3.metric("Highest AQI", f"{filtered['aqi'].max():.0f}" if not filtered.empty else "Unavailable")
+        if not filtered.empty:
+            trend = filtered.groupby("date", as_index=True)["aqi"].mean().rename("Average AQI")
+            st.line_chart(trend)
+            st.dataframe(filtered.sort_values("date", ascending=False).head(20), use_container_width=True, hide_index=True)
